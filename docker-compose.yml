@@ -1,0 +1,48 @@
+version: '3.8' 
+
+services:
+  frontend:
+    image: 468674686595.dkr.ecr.us-east-2.amazonaws.com/my-frontend-app:latest
+    ports:
+      - "80:80"
+    restart: always
+    environment:
+      - REACT_APP_BACKEND_URL=http://18.223.111.185:8000/api/
+
+  backend:
+    image: 468674686595.dkr.ecr.us-east-2.amazonaws.com/my-backend-app:latest
+    ports:
+      - "8000:8000"
+    environment:
+      MYSQL_DATABASE: mydatabase
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_HOST: db 
+      MYSQL_PORT: 3306
+      DJANGO_SECRET_KEY: "3c&=a=*1yqc-bdvzp==%uc*ao4ye!!^7or&ss6+k0wbr5o@l_k"
+      DJANGO_ALLOWED_HOSTS: "18.223.111.185,backend,localhost,127.0.0.1" 
+      DJANGO_DEBUG: "False" 
+
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root_assword # Root password for MySQL
+      MYSQL_DATABASE: mydatabase        # Database name to create
+      MYSQL_USER: user                  # User for the database
+      MYSQL_PASSWORD: password          # Password for the user
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+volumes:
+  db_data:

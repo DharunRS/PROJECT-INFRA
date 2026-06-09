@@ -1,0 +1,91 @@
+    # .github/workflows/deploy.yml
+    name: CI/CD Pipeline to AWS EC2
+
+    on:
+      workflow_dispatch: {}
+      push:
+        branches:
+          - main # Trigger this workflow when changes are pushed to the 'main' branch
+
+    jobs:
+      build-and-deploy:
+        runs-on: ubuntu-latest # Use the latest Ubuntu runner provided by GitHub Actions
+
+        steps:
+          - name: Checkout my-project-infra repository
+            uses: actions/checkout@v4
+            with:
+              repository: bhumikapandey1992/my-project-infra # Specify the infra repo
+              path: my-project-infra # Checkout into a specific path
+
+          - name: Checkout my-frontend-app repository
+            uses: actions/checkout@v4
+            with:
+              repository: bhumikapandey1992/my-frontend-app # Specify the frontend repo
+              path: my-frontend-app # Checkout into a specific path
+
+          - name: Checkout my-backend-app repository
+            uses: actions/checkout@v4
+            with:
+              repository: bhumikapandey1992/my-backend-app # Specify the backend repo
+              path: my-backend-app # Checkout into a specific path
+
+          - name: Configure AWS credentials
+            uses: aws-actions/configure-aws-credentials@v4 # Action to set up AWS credentials
+            with:
+              aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} # Use GitHub Secret for Access Key ID
+              aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # Use GitHub Secret for Secret Access Key
+              aws-region: ${{ secrets.AWS_REGION }} # Use GitHub Secret for AWS Region
+
+          - name: Login to Amazon ECR
+            id: login-ecr
+            uses: aws-actions/amazon-ecr-login@v2 # Action to log in to ECR
+
+          # Build and push Frontend Docker image to ECR
+          - name: Build and Push Frontend Image to ECR
+            env:
+              # Pass the EC2_HOST (Public IP) as a build argument to React
+              REACT_APP_BACKEND_URL: https://theproductpeek.shop/api/
+              AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+              AWS_REGION: ${{ secrets.AWS_REGION }}
+            run: |
+              # Navigate to the frontend application directory and then run the build command
+              cd my-frontend-app && \
+              docker buildx build --platform linux/amd64 --build-arg REACT_APP_BACKEND_URL="${REACT_APP_BACKEND_URL}" -t "${AWS_ACCOUNT_ID}".dkr.ecr."${AWS_REGION}".amazonaws.com/my-frontend-app:latest --no-cache --force-rm --push .
+
+          # Build and push Backend Docker image to ECR
+          - name: Build and Push Backend Image to ECR
+            env:
+              AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+              AWS_REGION: ${{ secrets.AWS_REGION }}
+            run: |
+              # Navigate to the backend application directory and then run the build command
+              cd my-backend-app && \
+              docker buildx build --platform linux/amd64 -t "${AWS_ACCOUNT_ID}".dkr.ecr."${AWS_REGION}".amazonaws.com/my-backend-app:latest --push .
+
+          - name: Deploy to EC2 via SSH
+            uses: appleboy/ssh-action@v1.0.3 # Action to execute commands via SSH
+            with:
+              host: ${{ secrets.EC2_HOST }} # EC2 Public IP from GitHub Secret
+              username: ${{ secrets.EC2_USER }} # EC2 User from GitHub Secret
+              key: ${{ secrets.EC2_SSH_KEY }} # EC2 SSH Private Key from GitHub Secret
+              script: |
+                # Navigate to the my-project-infra directory on EC2
+                cd ~/my-project-infra
+                # Pull the latest changes from GitHub (including docker-compose.yml updates)
+                git pull origin main
+                # Authenticate Docker to ECR on EC2
+                aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+                # Stop and remove existing containers, pull new images, and start services
+                docker-compose down -v # Remove containers and volumes (for fresh DB if needed)
+                docker-compose pull # Pull latest images from ECR
+                docker-compose up -d # Start services in detached mode
+                # Wait a bit for backend to be ready before migrations
+                sleep 10
+                # Get the backend container ID
+                BACKEND_CONTAINER_ID=$(docker ps -aqf "name=my-project-infra-backend-1")
+                # Run Django migrations
+                docker exec $BACKEND_CONTAINER_ID python manage.py migrate
+                # Optionally, create a superuser (if not already created)
+                # docker exec -it $BACKEND_CONTAINER_ID python manage.py createsuperuser --noinput || true
+                echo "Deployment complete!"
