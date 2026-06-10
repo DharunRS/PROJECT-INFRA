@@ -1,0 +1,49 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Set up multi-platform architecture compiling support
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      # 2. Authenticate cleanly using your secure secret keys
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 3. Build and push frontend (With Linux AMD64 architecture fix for Render)
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./MY-FRONTEND-APP
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/my-frontend-app:latest
+
+      # 4. Build and push backend (With Linux AMD64 architecture fix for Render)
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./myapi
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/myapi:latest
+
+      # 5. Safe deployment rollouts
+      - name: Deploy to Render
+        run: |
+          curl -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}"
+          curl -X POST "${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}"
